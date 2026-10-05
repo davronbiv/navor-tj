@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths-ignore: ['downloads/**']
 permissions:
   contents: read
 jobs:
@@ -17,11 +18,15 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: navortj-debug-key-v1
       - uses: gradle/actions/setup-gradle@v4
       - name: Build and lint
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug lintDebug
+          ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest lintDebug
       - uses: actions/upload-artifact@v4
         with:
           name: NAVORTJ-debug-APK

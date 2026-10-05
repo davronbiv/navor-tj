@@ -15,6 +15,9 @@ import java.util.*;
 
 public final class MainActivity extends Activity {
     private static final int NAVY=0xff071b2c, TEAL=0xff15b8af, ORANGE=0xffff943d, BG=0xfff3f6fa, INK=0xff183345, MUTED=0xff687d8c;
+    private final java.util.concurrent.ExecutorService workers=java.util.concurrent.Executors.newFixedThreadPool(3);
+    private boolean syncing;
+    private long lastSync;
     private ShopRepository store;
     private boolean tj;
     private String tab="home", query="", category="";
@@ -31,6 +34,15 @@ public final class MainActivity extends Activity {
         tj=store.tajik();
         if(saved!=null) { tab=saved.getString("tab","home");query=saved.getString("query","");category=saved.getString("category","");detail=store.find(saved.getString("detail","")); }
         render();
+    }
+    @Override protected void onResume(){super.onResume();if(store!=null)refreshCatalog(false);}
+    @Override protected void onDestroy(){workers.shutdownNow();super.onDestroy();}
+    private void refreshCatalog(boolean force){
+        if(syncing||(!force&&System.currentTimeMillis()-lastSync<30000))return;
+        syncing=true;lastSync=System.currentTimeMillis();
+        workers.execute(()->{try{org.json.JSONArray data=CatalogSync.catalog();ShopRepository.decode(data);
+            runOnUiThread(()->{syncing=false;if(isDestroyed())return;try{String id=detail==null?null:detail.id;store.replaceCatalog(data);if(id!=null)detail=store.find(id);if(!categories().contains(category))category="";render();if(force)toast(tr("Каталог нав шуд","Каталог обновлён"));}catch(Exception e){if(force)toast(tr("Каталог нав нашуд","Не удалось обновить каталог"));}});
+        }catch(Exception e){runOnUiThread(()->{syncing=false;if(force&&!isDestroyed())toast(tr("Интернетро санҷед. Каталоги охирин нигоҳ дошта шуд.","Проверьте интернет. Последний каталог сохранён."));});}});
     }
     @Override protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out); out.putString("tab",tab);out.putString("query",query);out.putString("category",category);out.putString("detail",detail==null?"":detail.id);
@@ -74,7 +86,7 @@ public final class MainActivity extends Activity {
         for(String cat:categories()){Button b=button(cat+"  →",BG,()->{tab="catalog";category=cat;query="";render();});body.addView(b);space(body,5);}
         space(body,18);body.addView(text(tr("Барои шумо","Для вас"),21,INK,true));space(body,10);
         for(int i=0;i<Math.min(3,store.products.size());i++)productCard(body,store.products.get(i));
-        body.addView(text(tr("Каталог дорои молҳои намунавӣ мебошад.","В каталоге представлены демонстрационные товары."),12,MUTED,false));
+        body.addView(button(tr("Нав кардани каталог","Обновить каталог"),TEAL,()->refreshCatalog(true)));
     }
     private LinkedHashSet<String> categories(){LinkedHashSet<String> s=new LinkedHashSet<>();for(Product p:store.products)s.add(p.category(tj));return s;}
     private void showCatalog(boolean onlyFavorites){
@@ -94,6 +106,10 @@ public final class MainActivity extends Activity {
         if(count==0)empty(results,onlyFavorites?tr("Ҳоло молҳои дилхоҳ нестанд","Пока нет избранных товаров"):tr("Мол ёфт нашуд","Товары не найдены"));
     }
     private View illustration(Product p,int height){
+        if(CatalogSync.remoteImage(p.image)){
+            ImageView img=new ImageView(this);img.setBackground(bg(0xffe8f7f5,16));img.setScaleType(ImageView.ScaleType.FIT_CENTER);img.setContentDescription(p.name(tj));img.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(height)));
+            workers.execute(()->{try{android.graphics.Bitmap bitmap=CatalogSync.image(getApplicationContext(),p.image);runOnUiThread(()->{if(!isDestroyed())img.setImageBitmap(bitmap);});}catch(Exception ignored){}});return img;
+        }
         if(!p.image.isEmpty()&&!p.image.contains("..")&&!p.image.startsWith("/"))try(InputStream in=getAssets().open("images/"+p.image)){ImageView img=new ImageView(this);img.setImageDrawable(android.graphics.drawable.Drawable.createFromStream(in,p.image));img.setScaleType(ImageView.ScaleType.FIT_CENTER);img.setAdjustViewBounds(true);img.setContentDescription(p.name(tj));img.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(height)));return img;}catch(Exception ignored){}
         TextView v=text(symbol(p.kind),height>100?64:32,TEAL,true);v.setGravity(Gravity.CENTER);v.setBackground(bg(0xffe8f7f5,16));v.setContentDescription(p.name(tj));v.setLayoutParams(new LinearLayout.LayoutParams(-1,dp(height)));return v;
     }
@@ -142,14 +158,15 @@ public final class MainActivity extends Activity {
     private void showSettings(){title(tr("Танзим ва тамос","Настройки и контакты"));body.addView(text(tr("Рақами WhatsApp-и мағоза","WhatsApp магазина"),17,INK,true));space(body,8);
         EditText phone=new EditText(this);phone.setSingleLine(true);phone.setInputType(android.text.InputType.TYPE_CLASS_PHONE);phone.setHint("+992 …");phone.setText(store.phone());body.addView(phone);space(body,10);
         body.addView(button(tr("Рақамро нигоҳ доред","Сохранить номер"),TEAL,()->{String n=phone.getText().toString().replaceAll("[^0-9]","");if(!n.matches("[1-9][0-9]{6,14}")){toast(tr("Рақами дурустро бо коди кишвар гузоред","Введите правильный номер с кодом страны"));return;}store.prefs.edit().putString("whatsapp",n).apply();toast(tr("Нигоҳ дошта шуд","Сохранено"));}));space(body,8);
-        body.addView(text(tr("Ин танзим танҳо дар ҳамин телефон нигоҳ дошта мешавад. Барои ҳамаи муштариён рақамро дар shop.json гузоред.","Эта настройка сохраняется только на этом телефоне. Для всех покупателей задайте номер в shop.json."),13,MUTED,false));space(body,20);
+        body.addView(text(tr("Ин танзим танҳо дар ҳамин телефон нигоҳ дошта мешавад. Барои ҳамаи муштариён рақамро соҳиби мағоза танзим мекунад.","Эта настройка сохраняется только на этом телефоне. Общий номер для покупателей задаёт владелец магазина."),13,MUTED,false));space(body,20);
         body.addView(button(tr("Забон: Тоҷикӣ → Русский","Язык: Русский → Тоҷикӣ"),NAVY,()->{tj=!tj;store.prefs.edit().putBoolean("tajik",tj).apply();category="";render();}));space(body,20);
         String email=store.config("email");if(!email.isEmpty()){body.addView(text("Email: "+email,15,INK,false));space(body,10);}
         String addr=store.config(tj?"address_tj":"address_ru");if(!addr.isEmpty()){body.addView(text(addr,17,INK,true));space(body,10);}
         body.addView(text(store.config(tj?"delivery_tj":"delivery_ru"),15,MUTED,false));space(body,10);
         String instagram=store.config("instagram");if(instagram.matches("[A-Za-z0-9_.]+")){body.addView(button("Instagram",TEAL,()->open("https://www.instagram.com/"+instagram+"/")));space(body,10);}
         body.addView(button(tr("Ба мағоза нависед","Написать в магазин"),TEAL,()->whatsapp(tr("Салом! Аз NAVORTJ менависам.","Здравствуйте! Пишу из NAVORTJ."))));space(body,20);
-        body.addView(text("NAVORTJ 1.0.0",17,INK,true));space(body,8);body.addView(text(tr("Сабад ва молҳои дилхоҳ дар телефон нигоҳ дошта мешаванд. Фармоишро худатон дар WhatsApp мефиристед. Дар ин барнома пардохти онлайн ва ҳисоби корбар нест.","Корзина и избранное хранятся на телефоне. Заказ вы отправляете самостоятельно в WhatsApp. Онлайн-оплаты и регистрации в этой версии нет."),14,MUTED,false));
+        body.addView(button(tr("Панели админ","Панель администратора"),NAVY,()->open(CatalogSync.ORIGIN)));space(body,10);body.addView(button(tr("Нав кардани каталог","Обновить каталог"),TEAL,()->refreshCatalog(true)));space(body,20);body.addView(text("NAVORTJ 1.1.0",17,INK,true));space(body,8);body.addView(text(tr("Сабад ва молҳои дилхоҳ дар телефон нигоҳ дошта мешаванд. Фармоишро худатон дар WhatsApp мефиристед. Дар ин барнома пардохти онлайн ва ҳисоби корбар нест.","Корзина и избранное хранятся на телефоне. Заказ вы отправляете самостоятельно в WhatsApp. Онлайн-оплаты и регистрации в этой версии нет."),14,MUTED,false));
     }
     @Override public void onBackPressed(){if(detail!=null){detail=null;render();}else if(!tab.equals("home")){go("home");}else super.onBackPressed();}
 }
+

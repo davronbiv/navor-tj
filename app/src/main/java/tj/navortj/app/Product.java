@@ -16,3 +16,4 @@ public final class Product {
     String subtitle(boolean tj){return tj?subtitleTj:subtitleRu;}
     String description(boolean tj){return tj?descriptionTj:descriptionRu;}
 }
+
